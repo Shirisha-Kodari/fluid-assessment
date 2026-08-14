@@ -1,0 +1,30 @@
+name: CI-CD
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t devops-challenge-backend:latest ./app
+
+      - name: Load image into kind
+        run: kind load docker-image devops-challenge-backend:latest --name challenge
+
+      - name: Apply manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/redis-deployment.yaml -f k8s/redis-service.yaml
+          kubectl apply -f k8s/backend-configmap.yaml
+          kubectl apply -f k8s/backend-deployment.yaml -f k8s/backend-service.yaml
+
+      - name: Force rollout to pick up new image
+        run: kubectl -n challenge rollout restart deployment/backend
+
+      - name: Wait for rollout
+        run: kubectl -n challenge rollout status deployment/backend --timeout=60s
