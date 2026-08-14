@@ -14,5 +14,5 @@ metadata:
   name: backend-config
   namespace: challenge
 data:
-  REDIS_HOST: "redis"
+  REDIS_HOST: "wrong-redis"
   REDIS_PORT: "6379"
