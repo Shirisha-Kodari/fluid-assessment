@@ -16,3 +16,6 @@ kind v0.29.0 go1.24.2 linux/amd64
 
 create cluster : 
  kind create cluster --name devops-cluster
+
+# image loaded into kind 
+ kind load docker-image backend:v1 --name devops-cluster
