@@ -1,30 +1,112 @@
+
 name: CI-CD
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   build-and-deploy:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: docker build -t devops-challenge-backend:latest ./app
+      # 1. Checkout source code
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Load image into kind
-        run: kind load docker-image devops-challenge-backend:latest --name challenge
-
-      - name: Apply manifests
+      # 2. Install Kind
+      - name: Install Kind
         run: |
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/redis-deployment.yaml -f k8s/redis-service.yaml
-          kubectl apply -f k8s/backend-configmap.yaml
-          kubectl apply -f k8s/backend-deployment.yaml -f k8s/backend-service.yaml
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
 
-      - name: Force rollout to pick up new image
-        run: kubectl -n challenge rollout restart deployment/backend
+      # 3. Create fresh Kind cluster
+      - name: Create Kind cluster
+        run: |
+          kind create cluster --name devops-cluster
+          kubectl cluster-info
+          kubectl get nodes
 
-      - name: Wait for rollout
-        run: kubectl -n challenge rollout status deployment/backend --timeout=60s
+      # 4. Build Docker image
+      - name: Build Docker image
+        run: |
+          docker build -t backend:v1 ./backend-app1
+
+      # 5. Load Docker image into Kind
+      - name: Load image into Kind
+        run: |
+          kind load docker-image backend:v1 --name devops-cluster
+
+      # 6. Verify image is available inside Kind
+      - name: Verify Docker image
+        run: |
+          docker exec devops-cluster-control-plane \
+            crictl images | grep backend
+
+      # 7. Create Kubernetes namespace
+      - name: Deploy namespace
+        run: |
+          kubectl apply -f k8s-1/namespace.yaml-1
+
+      # 8. Deploy Redis
+      - name: Deploy Redis
+        run: |
+          kubectl apply -f k8s-1/redis-deployement.yaml
+          kubectl apply -f k8s-1/redis-service.yaml
+
+      # 9. Deploy backend ConfigMap
+      - name: Deploy backend ConfigMap
+        run: |
+          kubectl apply -f k8s-1/backend-configmap.yaml
+
+      # 10. Deploy backend
+      - name: Deploy backend
+        run: |
+          kubectl apply -f k8s-1/backend-deployment.yaml
+          kubectl apply -f k8s-1/backend-service.yaml
+
+      # 11. Wait for Redis
+      - name: Wait for Redis
+        run: |
+          kubectl -n challenge rollout status \
+            deployment/redis --timeout=120s
+
+      # 12. Wait for backend
+      - name: Wait for backend
+        run: |
+          kubectl -n challenge rollout status \
+            deployment/backend --timeout=120s
+
+      # 13. Verify Kubernetes resources
+      - name: Verify Kubernetes resources
+        run: |
+          kubectl -n challenge get pods
+          kubectl -n challenge get deployments
+          kubectl -n challenge get services
+
+      # 14. Smoke test application
+      - name: Smoke test
+        run: |
+          kubectl -n challenge port-forward \
+            svc/backend 8080:80 > /tmp/port-forward.log 2>&1 &
+
+          PF_PID=$!
+
+          sleep 5
+
+          echo "Testing health endpoint..."
+          curl --fail http://localhost:8080/health
+
+          echo "Testing readiness endpoint..."
+          curl --fail http://localhost:8080/ready
+
+          echo "Testing application endpoint..."
+          curl --fail http://localhost:8080/
+
+          kill $PF_PID
